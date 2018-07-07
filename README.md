@@ -1,4 +1,4 @@
-# nmea-paser
+# nmea-parser
 an implementation of NMEA parser in c 
 
 
