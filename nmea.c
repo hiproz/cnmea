@@ -31,17 +31,16 @@ int get_nmea(char *buf, U8 key, char *nmea, U8 len) {
   if (buf == NULL || nmea == NULL)
     return ERROR;
 
-  // test
   memset(nmea, 0, MAX_NMEA_LINE_LEN);
   // strcpy(nmea,
   //       "GNRMC,161311.000,A,2234.8802,N,51.3389,E,0.09,316.36,271117,,,D*78");
   // strcpy(buf, "$GNRMC,092846.400,A,3029.7317,N,10404.1784,E,000.0,183.8,"
   //              "070417,,,A*73\r\n");
 
-  // log(INF,"GNSS buf %u:\n%s\n", strlen((char *)buf), buf);
+  //log(INF,"GNSS buf %u:\n%s\n", strlen((char *)buf), buf);
   head = strstr((char *)buf, (const char *)NMEA_KEY[key]);
   if (head == NULL || head >= buf + strlen((char *)buf)) {
-    // printf(RUN, "can't find %s\n", NMEA_KEY[key]);
+    //log(ERR, "can't find %s\n", NMEA_KEY[key]);
     return ERROR;
   }
 
@@ -55,8 +54,20 @@ int get_nmea(char *buf, U8 key, char *nmea, U8 len) {
 
   if (tail - head < len)
     data_len = tail - head;
-
+#if GPS_SIMU_SWITCH == 0
   strncpy(nmea, head, data_len);
+#else
+  // 经纬度转换：
+  // http://www.gzhatu.com/du2dfm.html
+  // 120.60132208247236，46.345724630462854 =>
+  // 120.6609459335181， 46.31641876415422 =>  12039.6567 4618.985125
+
+  // 模拟经纬度
+  srand(hal_time.ui32Second);
+  // 不能带 $
+  sprintf(nmea, "GNRMC,092846.400,A,4618.98%02d,N,12039.65%02d,E,000.0,183.8,070417,,,A*73", rand() % 100,
+          rand() % 100);
+#endif
   log(INF, "%s,len %u: %s\r\n", NMEA_KEY[key], data_len, nmea);
   // xor checksum
   head = strchr((char *)nmea, '*');
@@ -91,16 +102,19 @@ int get_nmea(char *buf, U8 key, char *nmea, U8 len) {
   int checksum_calc = 0;
   for (i = 0; i < nmea_len; i++)
     checksum_calc ^= nmea[i];
-  // log(INF,"calc checksum 0X%X\r\n", checksum_calc);
+    // log(INF,"calc checksum 0X%X\r\n", checksum_calc);
 
-  if (checksum_read == checksum_calc) {
+#if GPS_SIMU_SWITCH == 0
+  if (checksum_read == checksum_calc)
+#else
+  if (1)
+#endif
+  {
     return SUCCESS;
   } else {
     log(INF, "checksum error\r\n");
     return ERROR;
   }
-
-  return SUCCESS;
 }
 
 int get_gps_info(char *buf) {
@@ -115,7 +129,6 @@ int get_gps_info(char *buf) {
       log(INF, "Get GGA failed!\n");
       break;
     } else {
-      // printf("GGA:%s\n", nmea);
       ret = parse_nmea(&gps, EN_GGA, nmea);
       if (ret != SUCCESS) {
         gps.sat_uesed = 0;
@@ -134,7 +147,6 @@ int get_gps_info(char *buf) {
       log(INF, "Get GSV failed!\n");
       break;
     } else {
-      printf("GSV:%s\n", nmea);
       ret = parse_nmea(&gps, EN_GSV, nmea);
       if (ret != SUCCESS) {
         gps.sat_uesed = 0;
@@ -153,35 +165,18 @@ int get_gps_info(char *buf) {
       log(INF, "Get RMC failed!\r\n");
       break;
     } else {
-      // printf("RMC:%s\n", nmea);
       memset(rmc_str, 0, sizeof(rmc_str));
       strcpy(rmc_str, nmea);
       ret = parse_nmea(&gps, EN_RMC, nmea);
       if (ret != SUCCESS) {
-// 大牲畜清零，头羊网关不清零，使用前一个位置，尽可能保证小羊的上线
-#if DEVICE_TYPE == 1
         gps.state = EN_GS_V;
         gps.latitude = 0;
         gps.longitude = 0;
         memset(gps.lat_str, 0, sizeof(gps.lat_str));
         memset(gps.lng_str, 0, sizeof(gps.lng_str));
-#endif
-#if GPS_SIMU_SWITCH == 1
-        gps.latitude = 40647191;
-        gps.longitude = 204938407;
-        gps.lat_ind_str[0] = 'N';
-        gps.lng_ind_str[0] = 'E';
-        memset(gps.lat_str, 0, sizeof(gps.lat_str));
-        strcpy(gps.lat_str, "2234.906386");
 
-        memset(gps.lng_str, 0, sizeof(gps.lng_str));
-        strcpy(gps.lng_str, "11351.280253");
-        ret = SUCCESS;
-        return ret;
-#endif
-        log(INF, "Parse RMC failed!\r\n");
-        loc_success_times = 0;
-        ret = ERROR;
+        log(INF, "Parse GXRMC failed!\r\n");
+        return ERROR;
       }
 
       if (gps.latitude > 0 || gps.longitude > 0) {
@@ -538,7 +533,7 @@ int parse_gga(nmea_parsed_struct *gps, char *buf) {
   gps->msl_altitude = (U16)dvalue * 10;
 
   // print the gps info
-  // printf(RUN, "gps info: sat num %u; HDOP %u; msl_altitude %u\n",
+  // log(RUN, "gps info: sat num %u; HDOP %u; msl_altitude %u\n",
   // gps->sat_uesed, gps->hdop, gps->msl_altitude);
 
   return SUCCESS;
@@ -555,14 +550,14 @@ int snr_list_add(snr_node_struct *node) {
     for (i = 0; i < gps.snr_index; i++) {
       if (gps.snr_list[i].sat_no == node->sat_no) {
         memcpy(&gps.snr_list[i], node, sizeof(snr_node_struct));
-        printf("update %u node:%u %u \r\n", i, node->sat_no, node->snr);
+        log(INF, "update %u node:%u %u \r\n", i, node->sat_no, node->snr);
         return SUCCESS;
       }
     }
     memcpy(&gps.snr_list[gps.snr_index], node, sizeof(snr_node_struct));
-    printf("insert new snr node:%u %u \r\n", node->sat_no, node->snr);
+    log(INF, "insert new snr node:%u %u \r\n", node->sat_no, node->snr);
     gps.snr_index++;
-    printf("snr num:%u\r\n");
+    log(INF, "snr num:%u\r\n", gps.snr_index);
     return SUCCESS;
   } else
     return ERROR;
@@ -590,23 +585,19 @@ int parse_gsv(nmea_parsed_struct *gps, char *buf) {
 
   if (gps == NULL || buf == NULL)
     return ERROR;
-  // printf("1\r\n");
 
   head = buf + 6;
   for (i = 0; i < 3; i++) {
-    // printf("2:%s\r\n", head);
     tail = strchr(head, ',');
     if (tail == NULL) {
       log(INF, "invalid format:%s\r\n", head);
       return ERROR;
     }
-    // printf("3:%s\r\n", tail);
     head += (tail + 1 - head);
   }
 
   // 找到第一组数据
   do {
-    // printf("4:%s\r\n", head);
     tail = strchr(head, ',');
     if (tail == NULL) {
       log(INF, "invalid format:%s\r\n", head);
@@ -630,27 +621,23 @@ int parse_gsv(nmea_parsed_struct *gps, char *buf) {
       }
       head += (tail + 1 - head);
     }
-    // printf("5:%s\r\n", head);
     tail = strchr(head, ',');
     if (tail == NULL) {
       tail = strchr(head, '*');
-      // printf("found *\r\n");
     }
     if (tail - head > 16) { // 允许为空
       log(INF, "invalid packet\r\n");
-      // printf("invalid len\r\n");
       return ERROR;
     }
     if (tail - head) {
       memset(tmp, 0, sizeof(tmp));
       memcpy(tmp, head, tail - head);
-      // printf("6:%s\r\n", tmp);
       snr = atoi(tmp);
     } else
       snr = 0;
     head += (tail + 1 - head);
 
-    // printf("valide node,sat no %u snr val %u\n", sat_no, snr);
+    log(INF, "valide node,sat no %u snr val %u\n", sat_no, snr);
 
     // 存储当前节点解析的出来snr对值
     snr_node_struct snr_node;
