@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include "nmea.h"
+#include "cnmea.h"
 // clang-format on
 ///////////////////////////////////////////////////////////////////////////
 nmea_parsed_struct gps = {0};
