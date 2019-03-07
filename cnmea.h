@@ -12,7 +12,6 @@ extern "C" {
 #define log(level, fmt, ...) printf(fmt, ##__VA_ARGS__)
 #endif
 
-	
 #ifndef ERROR
 #define ERROR 1
 #endif
@@ -55,7 +54,9 @@ typedef signed int S32;
 #define MAX_DATETIME_LEN 6
 #define MAX_NMEA_LINE_LEN 256
 #define MAX_SNR_NUM 180
-#define SEPERATE_BD 1
+
+// gps模拟包的开关，为1时，使用代码中的模拟包
+#define GPS_SIMU_SWITCH 0
 
 typedef enum {
   EN_RMC = 0,
@@ -137,7 +138,7 @@ typedef struct
 
 extern nmea_parsed_struct gps;
 
-int get_gps_info(char *buf);
+int get_gps_info(char *buf, U16 len);
 
 #ifdef __cplusplus
 }

@@ -10,11 +10,9 @@ nmea_parsed_struct gps = {0};
 
 char rmc_str[MAX_NMEA_LINE_LEN];
 char nmea[MAX_NMEA_LINE_LEN] = {0};
-#if SEPERATE_BD == 1
-char NMEA_KEY[][6] = {"GNRMC", "GPVTG", "GNGGA", "GPGSA", "GPGSV", "GPGLL"};
-#else
-char NMEA_KEY[][6] = {"GPRMC", "GPVTG", "GPGGA", "GPGSA", "GPGSV", "GPGLL"};
-#endif
+
+char NMEA_KEY[][6] = {"RMC", "VTG", "GGA", "GSA", "GSV", "GLL"};
+
 U8 loc_success_times = 0; //连续定位成功的次数
 #define MIN_LOC_SUCCESS_TIMES 5
 /////////////////////////////////////////////////////////////////////////////
@@ -23,22 +21,19 @@ int parse_rmc(nmea_parsed_struct *gps, char *buf);
 int parse_gga(nmea_parsed_struct *gps, char *buf);
 int parse_gsv(nmea_parsed_struct *gps, char *buf);
 ////////////////////////////////////////////////////////////////////////////
-int get_nmea(char *buf, U8 key, char *nmea, U8 len) {
+int get_nmea(char **nmea_buf, U8 key, char *nmea, U8 len) {
   char *head, *tail;
   U8 data_len = len;
   int i;
+  char *buf = *nmea_buf;
 
   if (buf == NULL || nmea == NULL)
     return ERROR;
 
   memset(nmea, 0, MAX_NMEA_LINE_LEN);
-  // strcpy(nmea,
-  //       "GNRMC,161311.000,A,2234.8802,N,51.3389,E,0.09,316.36,271117,,,D*78");
-  // strcpy(buf, "$GNRMC,092846.400,A,3029.7317,N,10404.1784,E,000.0,183.8,"
-  //              "070417,,,A*73\r\n");
 
-  //log(INF,"GNSS buf %u:\n%s\n", strlen((char *)buf), buf);
-  head = strstr((char *)buf, (const char *)NMEA_KEY[key]);
+  // 适配北斗和GPS，所以跳过前3个字符
+  head = strstr((char *)buf + 3, (const char *)NMEA_KEY[key]);
   if (head == NULL || head >= buf + strlen((char *)buf)) {
     //log(ERR, "can't find %s\n", NMEA_KEY[key]);
     return ERROR;
@@ -52,10 +47,11 @@ int get_nmea(char *buf, U8 key, char *nmea, U8 len) {
     return ERROR;
   }
 
-  if (tail - head < len)
-    data_len = tail - head;
+  // 拷贝时，再还原回来
+  if (tail - (head - 2) < len)
+    data_len = tail - (head - 2);
 #if GPS_SIMU_SWITCH == 0
-  strncpy(nmea, head, data_len);
+  strncpy(nmea, (head - 2), data_len);
 #else
   // 经纬度转换：
   // http://www.gzhatu.com/du2dfm.html
@@ -65,16 +61,22 @@ int get_nmea(char *buf, U8 key, char *nmea, U8 len) {
   // 模拟经纬度
   srand(hal_time.ui32Second);
   // 不能带 $
-  sprintf(nmea, "GNRMC,092846.400,A,4618.98%02d,N,12039.65%02d,E,000.0,183.8,070417,,,A*73", rand() % 100,
+  sprintf(nmea, "GPRMC,092846.400,A,4618.98%02d,N,12039.65%02d,E,000.0,183.8,070417,,,A*73", rand() % 100,
           rand() % 100);
 #endif
-  log(INF, "%s,len %u: %s\r\n", NMEA_KEY[key], data_len, nmea);
+
+  //更新搜索的起点，准备下次继续搜索
+  *nmea_buf = tail + 2;
+
+  //log(INF, "%s,len %u: %s\r\n", NMEA_KEY[key], data_len, nmea);
   // xor checksum
   head = strchr((char *)nmea, '*');
   if (head == NULL) {
-    log(INF, "nmea format error\r\n");
+    log(ERR, "nmea format error\r\n");
     return ERROR;
   }
+
+  //校验内容的长度
   int nmea_len = head - nmea;
   // log(INF,"nmea len:%d\r\n", nmea_len);
 
@@ -85,7 +87,7 @@ int get_nmea(char *buf, U8 key, char *nmea, U8 len) {
   else if (*head >= 0x41 && *head <= 0x5A)
     checksum_read += (*head - 0x41 + 10) * 16;
   else {
-    log(INF, "checksum error\r\n");
+    log(ERR, "checksum error\r\n");
     return ERROR;
   }
   head++;
@@ -94,15 +96,17 @@ int get_nmea(char *buf, U8 key, char *nmea, U8 len) {
   else if (*head >= 0x41 && *head <= 0x5A)
     checksum_read += (*head - 0x41 + 10);
   else {
-    log(INF, "checksum error\r\n");
+    log(ERR, "checksum error\r\n");
     return ERROR;
   }
   // log(INF,"read checksum 0X%X\r\n", checksum_read);
 
   int checksum_calc = 0;
-  for (i = 0; i < nmea_len; i++)
+  for (i = 0; i < nmea_len; i++) {
     checksum_calc ^= nmea[i];
-    // log(INF,"calc checksum 0X%X\r\n", checksum_calc);
+  }
+  log(INF, "%s,len %u: %s\r\n", NMEA_KEY[key], data_len, nmea);
+  log(INF, "calc checksum 0X%X\r\n", checksum_calc);
 
 #if GPS_SIMU_SWITCH == 0
   if (checksum_read == checksum_calc)
@@ -117,50 +121,56 @@ int get_nmea(char *buf, U8 key, char *nmea, U8 len) {
   }
 }
 
-int get_gps_info(char *buf) {
+int get_gps_info(char *buf, U16 len) {
   S32 ret = ERROR;
-  U16 offset = 0;
+  char *buf_parse = NULL;
+
+  //nmea 的特征头 $GXRMC,
+  if (len < 7) {
+    log(ERR, "invalid len of NMEA");
+    return ERROR;
+  }
 
   // GGA
-  while (1) {
-    memset(nmea, 0, MAX_NMEA_LINE_LEN);
-    ret = get_nmea((char *)buf + offset, EN_GGA, nmea, MAX_NMEA_LINE_LEN - 1);
-    if (ret != SUCCESS) {
-      log(INF, "Get GGA failed!\n");
-      break;
-    } else {
-      ret = parse_nmea(&gps, EN_GGA, nmea);
-      if (ret != SUCCESS) {
-        gps.sat_uesed = 0;
-        log(INF, "Parse GGA failed!\n");
-      }
-      offset += strlen(nmea);
-    }
-  }
+  // while (1) {
+  //   memset(nmea, 0, MAX_NMEA_LINE_LEN);
+  //   ret = get_nmea((char *)buf + offset, EN_GGA, nmea, MAX_NMEA_LINE_LEN - 1);
+  //   if (ret != SUCCESS) {
+  //     log(INF, "Get GGA failed!\n");
+  //     break;
+  //   } else {
+  //     ret = parse_nmea(&gps, EN_GGA, nmea);
+  //     if (ret != SUCCESS) {
+  //       gps.sat_uesed = 0;
+  //       log(INF, "Parse GGA failed!\n");
+  //     }
+  //     offset += strlen(nmea);
+  //   }
+  // }
 
-  // GSV
-  offset = 0;
-  while (1) {
-    memset(nmea, 0, MAX_NMEA_LINE_LEN);
-    ret = get_nmea((char *)buf + offset, EN_GSV, nmea, MAX_NMEA_LINE_LEN - 1);
-    if (ret != SUCCESS) {
-      log(INF, "Get GSV failed!\n");
-      break;
-    } else {
-      ret = parse_nmea(&gps, EN_GSV, nmea);
-      if (ret != SUCCESS) {
-        gps.sat_uesed = 0;
-        log(INF, "Parse GSV failed!\n");
-      }
-      offset += strlen(nmea);
-    }
-  }
+  // // GSV
+  // offset = 0;
+  // while (1) {
+  //   memset(nmea, 0, MAX_NMEA_LINE_LEN);
+  //   ret = get_nmea((char *)buf + offset, EN_GSV, nmea, MAX_NMEA_LINE_LEN - 1);
+  //   if (ret != SUCCESS) {
+  //     log(INF, "Get GSV failed!\n");
+  //     break;
+  //   } else {
+  //     ret = parse_nmea(&gps, EN_GSV, nmea);
+  //     if (ret != SUCCESS) {
+  //       gps.sat_uesed = 0;
+  //       log(INF, "Parse GSV failed!\n");
+  //     }
+  //     offset += strlen(nmea);
+  //   }
+  // }
 
   // RMC
-  offset = 0;
-  while (1) {
+  buf_parse = buf;
+  while ((int)buf_parse < (int)buf + len) {
     memset(nmea, 0, MAX_NMEA_LINE_LEN);
-    ret = get_nmea((char *)buf + offset, EN_RMC, nmea, MAX_NMEA_LINE_LEN - 1);
+    ret = get_nmea((char **)&buf_parse, EN_RMC, nmea, MAX_NMEA_LINE_LEN - 1);
     if (ret != SUCCESS) {
       log(INF, "Get RMC failed!\r\n");
       break;
@@ -176,7 +186,7 @@ int get_gps_info(char *buf) {
         memset(gps.lng_str, 0, sizeof(gps.lng_str));
 
         log(INF, "Parse GXRMC failed!\r\n");
-        return ERROR;
+        continue;
       }
 
       if (gps.latitude > 0 || gps.longitude > 0) {
@@ -187,11 +197,12 @@ int get_gps_info(char *buf) {
         if (loc_success_times >= MIN_LOC_SUCCESS_TIMES) {
           loc_success_times = 0;
           return SUCCESS;
+        } else {
+          continue;
         }
       } else {
-        ret = ERROR;
+        continue;
       }
-      offset += strlen(nmea);
     }
   }
   return ret;
@@ -233,8 +244,9 @@ int parse_rmc(nmea_parsed_struct *gps, char *buf) {
   // GPRMC,133538.12,A,4717.13792,N,00834.16028,E,13.795,111.39,190203,,,A*53
   // GPRMC,,V,,,,,,,,,,N*53
   // GPRMC,091135.00,A,2232.10968,N,11401.40711,E,0.302,,311014,,,A*79
-  // log(INF,"GXRMC:%s\n", buf);
+  // log(INF,"RMC:%s\n", buf);
   // 1. 时间
+  // 从第一个逗号后面开始
   head = buf + 6;
   tail = strchr((char *)head, ',');
   if (tail == NULL) {
@@ -471,6 +483,7 @@ int parse_gga(nmea_parsed_struct *gps, char *buf) {
   /*GPGGA,,,,,,0,00,99.99,,,,,,*48*/
   // log(INF,"GXGGA:%s\n", buf);
   // 1. 时间
+  // 从第一个逗号后面开始
   head = buf + 6;
 
   for (i = 0; i < 6; i++) {
@@ -586,6 +599,7 @@ int parse_gsv(nmea_parsed_struct *gps, char *buf) {
   if (gps == NULL || buf == NULL)
     return ERROR;
 
+  // 从第一个逗号后面开始
   head = buf + 6;
   for (i = 0; i < 3; i++) {
     tail = strchr(head, ',');
