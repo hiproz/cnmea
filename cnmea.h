@@ -1,5 +1,6 @@
 #ifndef __NMEA_H__
 #define __NMEA_H__
+#include <stdint.h> //uintxx_t
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -38,25 +39,6 @@ extern "C" {
 #define NULL 0
 #endif
 
-#ifndef U8
-typedef unsigned char U8;
-#endif
-#ifndef S8
-typedef signed char S8;
-#endif
-#ifndef U16
-typedef unsigned short U16;
-#endif
-#ifndef S16
-typedef signed short S16;
-#endif
-#ifndef U32
-typedef unsigned int U32;
-#endif
-#ifndef S32
-typedef signed int S32;
-#endif
-
 #define MAX_DATETIME_LEN 6
 #define MAX_NMEA_LINE_LEN 256
 #define MAX_SNR_NUM 180
@@ -91,19 +73,19 @@ typedef struct {
 } gps_average_struct;
 
 typedef struct {
-  U16 sat_no;
-  U8 snr;
+  uint16_t sat_no;
+  uint8_t snr;
 } snr_node_struct;
 
 typedef struct {
-  U8 datetime[MAX_DATETIME_LEN];
-  U8 state;
+  uint8_t datetime[MAX_DATETIME_LEN];
+  uint8_t state;
 
   // 方便准确值表示，结合ind值使用
-  U32 latitude;
-  U8 lat_ind;
-  U32 longitude;
-  U8 long_ind;
+  uint32_t latitude;
+  uint8_t lat_ind;
+  uint32_t longitude;
+  uint8_t long_ind;
 
   // 字符串传输过程避免多次转换
   char lat_str[16];
@@ -111,12 +93,12 @@ typedef struct {
   char lng_str[16];
   char lng_ind_str[2];
 
-  U16 speed;
+  uint16_t speed;
 
-  U16 course;
-  U16 magnetic_value;
-  U8 magnetic_ind;
-  U8 mode;
+  uint16_t course;
+  uint16_t magnetic_value;
+  uint8_t magnetic_ind;
+  uint8_t mode;
 
   // 方便存储，但是会引入转换误差
   float f_latitude;
@@ -124,11 +106,11 @@ typedef struct {
   float f_altitude;
   float f_speed;
 
-  U8 sat_uesed;
-  U16 msl_altitude;
-  U16 hdop;
+  uint8_t sat_uesed;
+  uint16_t msl_altitude;
+  uint16_t hdop;
 
-  U16 snr_index;
+  uint16_t snr_index;
   snr_node_struct snr_list[MAX_SNR_NUM];
 
   gps_average_struct gps_average;
@@ -136,7 +118,7 @@ typedef struct {
 
 extern nmea_parsed_struct gps;
 
-int get_gps_info(char *buf, U16 len);
+int get_gps_info(char *buf, uint16_t len);
 
 #ifdef __cplusplus
 }
