@@ -1,10 +1,8 @@
-
-// clang-format off
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include "cnmea.h"
-// clang-format on
+
 ///////////////////////////////////////////////////////////////////////////
 nmea_parsed_struct gps = {0};
 
@@ -13,7 +11,7 @@ char nmea[MAX_NMEA_LINE_LEN] = {0};
 
 char NMEA_KEY[][6] = {"RMC", "VTG", "GGA", "GSA", "GSV", "GLL"};
 
-U8 loc_success_times = 0; //连续定位成功的次数
+uint8_t loc_success_times = 0; //连续定位成功的次数
 #define MIN_LOC_SUCCESS_TIMES 5
 /////////////////////////////////////////////////////////////////////////////
 int parse_nmea(nmea_parsed_struct *gps, NMEA_TYPE_EN key, char *buf);
@@ -21,9 +19,9 @@ int parse_rmc(nmea_parsed_struct *gps, char *buf);
 int parse_gga(nmea_parsed_struct *gps, char *buf);
 int parse_gsv(nmea_parsed_struct *gps, char *buf);
 ////////////////////////////////////////////////////////////////////////////
-int get_nmea(char **nmea_buf, U8 key, char *nmea, U8 len) {
+int get_nmea(char **nmea_buf, uint8_t key, char *nmea, uint8_t len) {
   char *head, *tail;
-  U8 data_len = len;
+  uint8_t data_len = len;
   int i;
   char *buf = *nmea_buf;
 
@@ -35,7 +33,7 @@ int get_nmea(char **nmea_buf, U8 key, char *nmea, U8 len) {
   // 适配北斗和GPS，所以跳过前3个字符
   head = strstr((char *)buf + 3, (const char *)NMEA_KEY[key]);
   if (head == NULL || head >= buf + strlen((char *)buf)) {
-    //log(ERR, "can't find %s\n", NMEA_KEY[key]);
+    log(ERR, "can't find %s\n", NMEA_KEY[key]);
     return ERROR;
   }
 
@@ -121,8 +119,8 @@ int get_nmea(char **nmea_buf, U8 key, char *nmea, U8 len) {
   }
 }
 
-int get_gps_info(char *buf, U16 len) {
-  S32 ret = ERROR;
+int get_gps_info(char *buf, uint16_t len) {
+  int ret = ERROR;
   char *buf_parse = NULL;
 
   //nmea 的特征头 $GXRMC,
@@ -131,40 +129,39 @@ int get_gps_info(char *buf, U16 len) {
     return ERROR;
   }
 
+  buf_parse = buf;
   // GGA
-  // while (1) {
-  //   memset(nmea, 0, MAX_NMEA_LINE_LEN);
-  //   ret = get_nmea((char *)buf + offset, EN_GGA, nmea, MAX_NMEA_LINE_LEN - 1);
-  //   if (ret != SUCCESS) {
-  //     log(INF, "Get GGA failed!\n");
-  //     break;
-  //   } else {
-  //     ret = parse_nmea(&gps, EN_GGA, nmea);
-  //     if (ret != SUCCESS) {
-  //       gps.sat_uesed = 0;
-  //       log(INF, "Parse GGA failed!\n");
-  //     }
-  //     offset += strlen(nmea);
-  //   }
-  // }
+  while (1) {
+    memset(nmea, 0, MAX_NMEA_LINE_LEN);
+    ret = get_nmea((char **)&buf_parse, EN_GGA, nmea, MAX_NMEA_LINE_LEN - 1);
+    if (ret != SUCCESS) {
+      log(INF, "Get GGA failed!\n");
+      break;
+    } else {
+      ret = parse_nmea(&gps, EN_GGA, nmea);
+      if (ret != SUCCESS) {
+        gps.sat_uesed = 0;
+        log(INF, "Parse GGA failed!\n");
+      }
+    }
+  }
 
-  // // GSV
-  // offset = 0;
-  // while (1) {
-  //   memset(nmea, 0, MAX_NMEA_LINE_LEN);
-  //   ret = get_nmea((char *)buf + offset, EN_GSV, nmea, MAX_NMEA_LINE_LEN - 1);
-  //   if (ret != SUCCESS) {
-  //     log(INF, "Get GSV failed!\n");
-  //     break;
-  //   } else {
-  //     ret = parse_nmea(&gps, EN_GSV, nmea);
-  //     if (ret != SUCCESS) {
-  //       gps.sat_uesed = 0;
-  //       log(INF, "Parse GSV failed!\n");
-  //     }
-  //     offset += strlen(nmea);
-  //   }
-  // }
+  // GSV
+  buf_parse = buf;
+  while (1) {
+    memset(nmea, 0, MAX_NMEA_LINE_LEN);
+    ret = get_nmea((char **)&buf_parse, EN_GSV, nmea, MAX_NMEA_LINE_LEN - 1);
+    if (ret != SUCCESS) {
+      log(INF, "Get GSV failed!\n");
+      break;
+    } else {
+      ret = parse_nmea(&gps, EN_GSV, nmea);
+      if (ret != SUCCESS) {
+        gps.sat_uesed = 0;
+        log(INF, "Parse GSV failed!\n");
+      }
+    }
+  }
 
   // RMC
   buf_parse = buf;
@@ -190,9 +187,8 @@ int get_gps_info(char *buf, U16 len) {
       }
 
       if (gps.latitude > 0 || gps.longitude > 0) {
-        log(RUN, "RMC success %u times.lat:%s;lng:%s;speed:%u;sat used:%u\r\n",
-            loc_success_times, gps.lat_str, gps.lng_str, gps.speed,
-            gps.sat_uesed);
+        log(RUN, "RMC success %u times.lat:%s;lng:%s;speed:%u;sat used:%u\r\n", loc_success_times, gps.lat_str,
+            gps.lng_str, gps.speed, gps.sat_uesed);
         loc_success_times++;
         if (loc_success_times >= MIN_LOC_SUCCESS_TIMES) {
           loc_success_times = 0;
@@ -235,7 +231,7 @@ int parse_rmc(nmea_parsed_struct *gps, char *buf) {
   // int ret;
   char *head, *tail;
   double dvalue;
-  U32 uvalue;
+  uint32_t uvalue;
   char tmp[16] = {0};
 
   if (gps == NULL || buf == NULL)
@@ -264,7 +260,7 @@ int parse_rmc(nmea_parsed_struct *gps, char *buf) {
   memcpy(tmp, head, tail - head);
   // log(INF,"gps datetiem:%s\n", tmp);
   dvalue = atof(tmp);
-  uvalue = (U32)dvalue;
+  uvalue = (uint32_t)dvalue;
   gps->datetime[3] = uvalue / 10000;
   gps->datetime[4] = (uvalue % 10000) / 100;
   gps->datetime[5] = uvalue % 100;
@@ -302,9 +298,11 @@ int parse_rmc(nmea_parsed_struct *gps, char *buf) {
   strcpy(gps->lat_str, tmp);
 
   dvalue = atof(tmp);
-  uvalue = (U32)dvalue;
-  gps->latitude =
-      (U32)(((uvalue / 100) * 60 + (dvalue - uvalue / 100 * 100)) * 30000);
+
+  uvalue = (uint32_t)dvalue;
+  gps->latitude = (uint32_t)(((uvalue / 100) * 60 + (dvalue - uvalue / 100 * 100)) * 30000);
+
+  gps->f_latitude = (float)gps->latitude/(60*30000);
 
   // dvalue = uvalue / 100 + (dvalue - uvalue / 100) / 60;
   // memset(tmp, 0, 16);
@@ -324,6 +322,11 @@ int parse_rmc(nmea_parsed_struct *gps, char *buf) {
     gps->lat_ind_str[0] = 'S';
     gps->lat_ind_str[1] = 0;
     tail = head + 1;
+    
+	/* 南纬用负数表示 */
+	sprintf(gps->lat_str, "-%s", gps->lat_str);	
+    gps->f_latitude = -(gps->f_latitude);
+
   } else {
     log(INF, "invalid lng indication\r\n");
     return ERROR;
@@ -345,10 +348,11 @@ int parse_rmc(nmea_parsed_struct *gps, char *buf) {
   strcpy(gps->lng_str, tmp);
 
   dvalue = atof(tmp);
-  uvalue = (U32)dvalue;
-  gps->longitude =
-      (U32)((uvalue / 100 * 60 + (dvalue - uvalue / 100 * 100)) * 30000);
 
+  uvalue = (uint32_t)dvalue;
+  gps->longitude = (uint32_t)((uvalue / 100 * 60 + (dvalue - uvalue / 100 * 100)) * 30000);
+  
+  gps->f_longitude = (float)gps->longitude/(60*30000);
   // dvalue = uvalue / 100 + (dvalue - uvalue / 100) / 60;
   // memset(tmp, 0, 16);
   // sprintf(tmp, "%f", dvalue);
@@ -367,6 +371,9 @@ int parse_rmc(nmea_parsed_struct *gps, char *buf) {
     gps->lng_ind_str[0] = 'W';
     gps->lng_ind_str[1] = 0;
     tail = head + 1;
+    /* 西经用负数表示 */
+	sprintf(gps->lng_str, "-%s", gps->lng_str);	
+    gps->f_longitude = -(gps->f_longitude);
   } else {
     log(INF, "invalid lat indication\r\n");
     return ERROR;
@@ -387,8 +394,11 @@ int parse_rmc(nmea_parsed_struct *gps, char *buf) {
   memset(tmp, 0, 16);
   memcpy(tmp, head, tail - head);
   dvalue = atof(tmp);
-  // knots 转换成kph
-  gps->speed = (U16)(dvalue * 1.852) * 100;
+  
+  // 单位 km/s
+  gps->f_speed = dvalue * 1852;
+  // knots 转换成kph  10m/s 为单位
+  gps->speed = (uint16_t)(dvalue * 1.852) * 100;
 
   // 8. 航向 以真北为参考
   head = tail + 1;
@@ -404,7 +414,7 @@ int parse_rmc(nmea_parsed_struct *gps, char *buf) {
   memset(tmp, 0, 16);
   memcpy(tmp, head, tail - head);
   dvalue = atof(tmp);
-  gps->course = (U16)dvalue * 100;
+  gps->course = (uint16_t)dvalue * 100;
   // 9. 日期
   head = tail + 1;
   tail = strchr((char *)head, ',');
@@ -417,7 +427,7 @@ int parse_rmc(nmea_parsed_struct *gps, char *buf) {
     return ERROR;
   }
   memcpy(tmp, head, tail - head);
-  uvalue = (U32)atof(tmp);
+  uvalue = (uint32_t)atof(tmp);
   gps->datetime[2] = uvalue / 10000;
   gps->datetime[1] = (uvalue % 10000) / 100;
   gps->datetime[0] = uvalue % 100;
@@ -438,7 +448,7 @@ int parse_rmc(nmea_parsed_struct *gps, char *buf) {
   memset(tmp, 0, 16);
   memcpy(tmp, head, tail - head);
   dvalue = atof(tmp);
-  gps->magnetic_value = (U16)dvalue * 100;
+  gps->magnetic_value = (uint16_t)dvalue * 100;
 
   // 11. 磁偏角方向
   head = tail + 1;
@@ -474,7 +484,7 @@ int parse_gga(nmea_parsed_struct *gps, char *buf) {
   char *head, *tail;
   double dvalue;
   char tmp[16] = {0};
-  U8 i;
+  int i;
 
   if (gps == NULL || buf == NULL)
     return ERROR;
@@ -527,7 +537,7 @@ int parse_gga(nmea_parsed_struct *gps, char *buf) {
   memset(tmp, 0, 16);
   memcpy(tmp, head, tail - head);
   dvalue = atof(tmp);
-  gps->hdop = (U16)dvalue * 100;
+  gps->hdop = (uint16_t)dvalue * 100;
 
   // 3. 海拔
   head = tail + 1;
@@ -543,7 +553,8 @@ int parse_gga(nmea_parsed_struct *gps, char *buf) {
   memset(tmp, 0, 16);
   memcpy(tmp, head, tail - head);
   dvalue = atof(tmp);
-  gps->msl_altitude = (U16)dvalue * 10;
+  gps->f_altitude = dvalue;
+  gps->msl_altitude = (uint16_t)dvalue * 10;
 
   // print the gps info
   // log(RUN, "gps info: sat num %u; HDOP %u; msl_altitude %u\n",
@@ -591,10 +602,10 @@ void snr_list_sort(void) {
 }
 int parse_gsv(nmea_parsed_struct *gps, char *buf) {
   char *head, *tail;
-  U16 sat_no;
-  U8 snr;
+  uint16_t sat_no;
+  uint8_t snr;
   char tmp[16] = {0};
-  U8 i;
+  int i;
 
   if (gps == NULL || buf == NULL)
     return ERROR;
