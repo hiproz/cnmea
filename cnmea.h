@@ -5,20 +5,6 @@
 extern "C" {
 #endif
 
-// clang-format off
-// clang-format on
-#define CNMEA_ENABLE_LOG 1
-
-#if CNMEA_ENABLE_LOG
-#ifdef CLOG
-#include "clog.h"
-#else
-#define log(level, fmt, ...) printf(fmt, ##__VA_ARGS__)
-#endif
-#else
-#define log(level, fmt, ...)
-#endif
-
 #ifndef ERROR
 #define ERROR 1
 #endif
