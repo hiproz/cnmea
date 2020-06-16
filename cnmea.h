@@ -29,6 +29,7 @@ extern "C" {
 #define MAX_NMEA_LINE_LEN 256
 #define MAX_SNR_NUM 180
 
+#define GPS_ARVRG_NUM 5 //进行gps平均时的位置数
 // gps模拟包的开关，为1时，使用代码中的模拟包
 #define GPS_SIMU_SWITCH 0
 
@@ -52,10 +53,10 @@ typedef enum {
 typedef struct {
   int index;
   int count;
-  double lat[5];
-  double lng[5];
-  double lat_average;
-  double lng_average;
+  float lat[GPS_ARVRG_NUM];
+  float lng[GPS_ARVRG_NUM];
+  float lat_average;
+  float lng_average;
 } gps_average_struct;
 
 typedef struct {
@@ -103,6 +104,7 @@ typedef struct {
 } nmea_parsed_struct;
 
 extern nmea_parsed_struct gps;
+extern uint8_t loc_success_times;
 
 int get_gps_info(char *buf, uint16_t len);
 

@@ -3,18 +3,35 @@
 #include <stdlib.h>
 #include "cnmea.h"
 ////////////////////////////////////////
-#define CNMEA_ENABLE_LOG 1
-#define CLOG 1
+#define CNMEA_LOG_ENABLE 1
+#define CLOG             1
+#define FREERTOS         1
 
-#if CNMEA_ENABLE_LOG
+#if FREERTOS
+#include "FreeRTOS.h"
+#include "timers.h"
+// delay ms
+#define cnmea_delay vTaskDelay
+#else
+#define cnmea_delay
+#endif
+
+#if CNMEA_LOG_ENABLE
 #ifdef CLOG
 #include "clog.h"
+#define cnmea_inf clog_inf
+#define cnmea_war clog_war
+#define cnmea_err clog_err
 #else
-#define clog(level, fmt, ...) printf(fmt, ##__VA_ARGS__)
+#define cnmea_inf printf
+#define cnmea_war printf
+#define cnmea_err printf
 #endif
-#else //CNMEA_ENABLE_LOG
-#define clog(level, fmt, ...)
-#endif
+#else
+#define cnmea_inf(...)
+#define cnmea_war(...)
+#define cnmea_err(...)
+#endif  //CNMEA_LOG_ENABLE
 
 ///////////////////////////////////////////////////////////////////////////
 nmea_parsed_struct gps = {0};
@@ -24,20 +41,20 @@ char nmea[MAX_NMEA_LINE_LEN] = {0};
 
 char NMEA_KEY[][6] = {"RMC", "VTG", "GGA", "GSA", "GSV", "GLL"};
 
-uint8_t loc_success_times = 0; //连续定位成功的次数
-#define MIN_LOC_SUCCESS_TIMES 3
+uint8_t loc_success_times = 0;  //连续定位成功的次数
+#define MIN_LOC_SUCCESS_TIMES 15
 /////////////////////////////////////////////////////////////////////////////
-int parse_nmea(nmea_parsed_struct *gps, NMEA_TYPE_EN key, char *buf);
-int parse_rmc(nmea_parsed_struct *gps, char *buf);
-int parse_gga(nmea_parsed_struct *gps, char *buf);
-int parse_gsv(nmea_parsed_struct *gps, char *buf);
+int parse_nmea(nmea_parsed_struct* gps, NMEA_TYPE_EN key, char* buf);
+int parse_rmc(nmea_parsed_struct* gps, char* buf);
+int parse_gga(nmea_parsed_struct* gps, char* buf);
+int parse_gsv(nmea_parsed_struct* gps, char* buf);
 ////////////////////////////////////////////////////////////////////////////
 
-int get_nmea(char **nmea_buf, uint8_t key, char *nmea, uint8_t len) {
-  char *head, *tail;
+int get_nmea(char** nmea_buf, uint8_t key, char* nmea, uint8_t len) {
+  char *  head, *tail;
   uint8_t data_len = len;
-  int i;
-  char *buf = *nmea_buf;
+  int     i;
+  char*   buf = *nmea_buf;
 
   if (buf == NULL || nmea == NULL)
     return ERROR;
@@ -45,18 +62,18 @@ int get_nmea(char **nmea_buf, uint8_t key, char *nmea, uint8_t len) {
   memset(nmea, 0, MAX_NMEA_LINE_LEN);
 
   // 适配北斗和GPS，所以跳过前3个字符
-  head = strstr((char *)buf + 3, (const char *)NMEA_KEY[key]);
-  if (head == NULL || head >= buf + strlen((char *)buf)) {
-    //clog(WAR, "can't find %s\n", NMEA_KEY[key]);
+  head = strstr((char*)buf + 3, (const char*)NMEA_KEY[key]);
+  if (head == NULL || head >= buf + strlen((char*)buf)) {
+    //cnmea_war( "can't find %s\n", NMEA_KEY[key]);
     return ERROR;
   } else {
-    clog(RUN, "found %s\n", NMEA_KEY[key]);
+    cnmea_inf("found %s\n", NMEA_KEY[key]);
   }
 
-  // clog(INF,"GNRMC:%s\r\n", head);
-  tail = strstr((char *)head, "\r\n");
-  if (tail == NULL || tail >= buf + strlen((char *)buf)) {
-    clog(INF, "can't find 0x0A0D\r\n");
+  // cnmea_inf("GNRMC:%s\r\n", head);
+  tail = strstr((char*)head, "\r\n");
+  if (tail == NULL || tail >= buf + strlen((char*)buf)) {
+    cnmea_inf("can't find 0x0A0D\r\n");
 
     return ERROR;
   }
@@ -76,24 +93,23 @@ int get_nmea(char **nmea_buf, uint8_t key, char *nmea, uint8_t len) {
   // 模拟经纬度
   srand(hal_time.ui32Second);
   // 不能带 $
-  sprintf(nmea, "GPRMC,092846.400,A,4618.98%02d,N,12039.65%02d,E,000.0,183.8,070417,,,A*73", rand() % 100,
-          rand() % 100);
+  sprintf(nmea, "GPRMC,092846.400,A,4618.98%02d,N,12039.65%02d,E,000.0,183.8,070417,,,A*73", rand() % 100, rand() % 100);
 #endif
 
   //更新搜索的起点，准备下次继续搜索
   *nmea_buf = tail + 2;
 
-  //clog(INF, "%s,len %u: %s\r\n", NMEA_KEY[key], data_len, nmea);
+  //cnmea_inf( "%s,len %u: %s\r\n", NMEA_KEY[key], data_len, nmea);
   // xor checksum
-  head = strchr((char *)nmea, '*');
+  head = strchr((char*)nmea, '*');
   if (head == NULL) {
-    clog(ERR, "nmea format error:%s\r\n", nmea);
+    cnmea_err("nmea format error:%s\r\n", nmea);
     return ERROR;
   }
 
   //校验内容的长度
   int nmea_len = head - nmea;
-  // clog(INF,"nmea len:%d\r\n", nmea_len);
+  // cnmea_inf("nmea len:%d\r\n", nmea_len);
 
   int checksum_read = 0;
   head++;
@@ -102,7 +118,7 @@ int get_nmea(char **nmea_buf, uint8_t key, char *nmea, uint8_t len) {
   else if (*head >= 0x41 && *head <= 0x5A)
     checksum_read += (*head - 0x41 + 10) * 16;
   else {
-    clog(ERR, "checksum error\r\n");
+    cnmea_err("checksum error\r\n");
     return ERROR;
   }
   head++;
@@ -111,17 +127,18 @@ int get_nmea(char **nmea_buf, uint8_t key, char *nmea, uint8_t len) {
   else if (*head >= 0x41 && *head <= 0x5A)
     checksum_read += (*head - 0x41 + 10);
   else {
-    clog(ERR, "checksum error\r\n");
+    cnmea_err("checksum error\r\n");
     return ERROR;
   }
-  // clog(INF,"read checksum 0X%X\r\n", checksum_read);
+  // cnmea_inf("read checksum 0X%X\r\n", checksum_read);
 
   int checksum_calc = 0;
   for (i = 0; i < nmea_len; i++) {
     checksum_calc ^= nmea[i];
   }
-  clog(INF, "%s,len %u: %s\r\n", NMEA_KEY[key], data_len, nmea);
-  //clog(INF, "calc checksum 0X%X\r\n", checksum_calc);
+
+  cnmea_inf("%s,len %u: %s\r\n", NMEA_KEY[key], data_len, nmea);
+  //cnmea_inf( "calc checksum 0X%X\r\n", checksum_calc);
 
 #if GPS_SIMU_SWITCH == 0
   if (checksum_read == checksum_calc)
@@ -131,7 +148,7 @@ int get_nmea(char **nmea_buf, uint8_t key, char *nmea, uint8_t len) {
   {
     return SUCCESS;
   } else {
-    clog(ERR, "checksum error，read:%d, calc:%d\r\n", checksum_read, checksum_calc);
+    cnmea_err("checksum error，read:%d, calc:%d\r\n", checksum_read, checksum_calc);
     return ERROR;
   }
 }
@@ -139,28 +156,31 @@ int get_nmea(char **nmea_buf, uint8_t key, char *nmea, uint8_t len) {
  * 
  * 注意: 这个接口的buf必须包含完整的类似“$GNRMC”的报文头部特征，否则解析可能失效
  */
-int get_gps_info(char *buf, uint16_t len) {
-  int ret = ERROR;
-  char *buf_parse = NULL;
+int get_gps_info(char* buf, uint16_t len) {
+  int   ret       = ERROR;
+  char* buf_parse = NULL;
+
+  buf[len - 1] = 0;
 
   //nmea 的特征头 $GXRMC,
   if (len < 7) {
-    clog(ERR, "invalid len of NMEA");
+    cnmea_err("invalid len of NMEA");
     return ERROR;
   }
 
   buf_parse = buf;
 
   // GGA
-  while (1) {
+  while (*buf_parse) {
     memset(nmea, 0, MAX_NMEA_LINE_LEN);
-    ret = get_nmea((char **)&buf_parse, EN_GGA, nmea, MAX_NMEA_LINE_LEN - 1);
+    ret = get_nmea((char**)&buf_parse, EN_GGA, nmea, MAX_NMEA_LINE_LEN - 1);
     if (ret != SUCCESS) {
       break;
     } else {
       ret = parse_nmea(&gps, EN_GGA, nmea);
       if (ret != SUCCESS) {
-        clog(INF, "parse GGA failed!\n");
+        cnmea_inf("parse GGA failed!\n");
+        cnmea_delay(50);
         continue;
       } else {
         break;
@@ -170,27 +190,25 @@ int get_gps_info(char *buf, uint16_t len) {
 
   // GSV
   buf_parse = buf;
-  while (1) {
+  while (*buf_parse) {
+    int index = 0;
     memset(nmea, 0, MAX_NMEA_LINE_LEN);
-    ret = get_nmea((char **)&buf_parse, EN_GSV, nmea, MAX_NMEA_LINE_LEN - 1);
+    ret = get_nmea((char**)&buf_parse, EN_GSV, nmea, MAX_NMEA_LINE_LEN - 1);
     if (ret != SUCCESS) {
       break;
     } else {
-      ret = parse_nmea(&gps, EN_GSV, nmea);
-      if (ret != SUCCESS) {
-        clog(INF, "parse GSV failed!\n");
-        continue;
-      } else {
-        break;
-      }
+      // 支持多组报文
+      cnmea_inf("gsv %d:%s\r\n", index, nmea);
+      index++;
+      parse_nmea(&gps, EN_GSV, nmea);
     }
   }
 
   // RMC
   buf_parse = buf;
-  while (1) {
+  while (*buf_parse) {
     memset(nmea, 0, MAX_NMEA_LINE_LEN);
-    ret = get_nmea((char **)&buf_parse, EN_RMC, nmea, MAX_NMEA_LINE_LEN - 1);
+    ret = get_nmea((char**)&buf_parse, EN_RMC, nmea, MAX_NMEA_LINE_LEN - 1);
     if (ret != SUCCESS) {
       break;
     } else {
@@ -198,38 +216,59 @@ int get_gps_info(char *buf, uint16_t len) {
       //strcpy(rmc_str, nmea);
       ret = parse_nmea(&gps, EN_RMC, nmea);
       if (ret != SUCCESS) {
-        clog(INF, "parse RMC failed!\r\n");
+        cnmea_inf("parse RMC failed!\r\n");
+        cnmea_delay(50);
         continue;
       }
 
       if (gps.latitude > 0 || gps.longitude > 0) {
-        clog(RUN, "RMC success %u times.lat:%s;lng:%s;speed:%u;sat used:%u\r\n", loc_success_times, gps.lat_str,
-             gps.lng_str, gps.speed, gps.sat_uesed);
+        clog_run("RMC success %u times.lat:%s;lng:%s;speed:%u;sat used:%u\r\n", loc_success_times, gps.lat_str, gps.lng_str, gps.speed, gps.sat_uesed);
+        gps.gps_average.lat[gps.gps_average.index] = gps.f_latitude;
+        gps.gps_average.lng[gps.gps_average.index] = gps.f_longitude;
+        gps.gps_average.index                      = (gps.gps_average.index + 1) % GPS_ARVRG_NUM;
+        gps.gps_average.count++;
+        if (gps.gps_average.count > GPS_ARVRG_NUM) {
+          gps.gps_average.count = GPS_ARVRG_NUM;
+        }
         loc_success_times++;
         if (loc_success_times >= MIN_LOC_SUCCESS_TIMES) {
           loc_success_times = 0;
+          // 求平均值
+          int   i;
+          float lat_sum = 0;
+          float lng_sum = 0;
+          for (i = 0; i < gps.gps_average.count; i++) {
+            lat_sum += gps.gps_average.lat[i];
+            lng_sum += gps.gps_average.lng[i];
+          }
+
+          gps.gps_average.lat_average = lat_sum / gps.gps_average.count;
+          gps.gps_average.lng_average = lng_sum / gps.gps_average.count;
           return SUCCESS;
         } else {
+          cnmea_delay(50);
           continue;
         }
       } else {
-        clog(ERR, "locating failed, invalid location\r\n");
+        loc_success_times = 0;
+        cnmea_inf("locating failed, invalid location\r\n");
+        cnmea_delay(50);
         continue;
       }
     }
   }
 
-  gps.state = EN_GS_V;
-  gps.latitude = 0;
+  gps.state     = EN_GS_V;
+  gps.latitude  = 0;
   gps.longitude = 0;
   memset(gps.lat_str, 0, sizeof(gps.lat_str));
   memset(gps.lng_str, 0, sizeof(gps.lng_str));
 
-  clog(ERR, "gps success %d times, less than %d times,locating failed\r\n", loc_success_times, MIN_LOC_SUCCESS_TIMES);
+  cnmea_err("gps success %d times, less than %d times,locating failed\r\n", loc_success_times, MIN_LOC_SUCCESS_TIMES);
   return ret;
 }
 
-int parse_nmea(nmea_parsed_struct *gps, NMEA_TYPE_EN key, char *buf) {
+int parse_nmea(nmea_parsed_struct* gps, NMEA_TYPE_EN key, char* buf) {
   int ret = ERROR;
 
   if (gps == NULL || buf == NULL)
@@ -252,12 +291,12 @@ int parse_nmea(nmea_parsed_struct *gps, NMEA_TYPE_EN key, char *buf) {
 
   return ret;
 }
-int parse_rmc(nmea_parsed_struct *gps, char *buf) {
+int parse_rmc(nmea_parsed_struct* gps, char* buf) {
   // int ret;
-  char *head, *tail;
-  double dvalue;
+  char *   head, *tail;
+  double   dvalue;
   uint32_t uvalue;
-  char tmp[16] = {0};
+  char     tmp[16] = {0};
 
   if (gps == NULL || buf == NULL)
     return ERROR;
@@ -265,31 +304,31 @@ int parse_rmc(nmea_parsed_struct *gps, char *buf) {
   // GPRMC,133538.12,A,4717.13792,N,00834.16028,E,13.795,111.39,190203,,,A*53
   // GPRMC,,V,,,,,,,,,,N*53
   // GPRMC,091135.00,A,2232.10968,N,11401.40711,E,0.302,,311014,,,A*79
-  // clog(INF,"RMC:%s\n", buf);
+  // cnmea_inf("RMC:%s\n", buf);
   // 1. 时间
   // 从第一个逗号后面开始
   head = buf + 6;
-  tail = strchr((char *)head, ',');
+  tail = strchr((char*)head, ',');
   if (tail == NULL) {
-    clog(INF, "invalid format:%s\r\n", head);
+    cnmea_inf("invalid format:%s\r\n", head);
     return ERROR;
   }
 
   //根据时间决定定位信息是否有效
   //说明2个逗号相邻，数据为空
   if (tail - head == 0 || tail - head > 16) {
-    clog(INF, "invalid gprmc,find datetime failed\r\n");
+    cnmea_inf("invalid gprmc,find datetime failed\r\n");
     return ERROR;
   }
 
   memcpy(tmp, head, tail - head);
-  // clog(INF,"gps datetiem:%s\n", tmp);
-  dvalue = atof(tmp);
-  uvalue = (uint32_t)dvalue;
+  // cnmea_inf("gps datetiem:%s\n", tmp);
+  dvalue           = atof(tmp);
+  uvalue           = (uint32_t)dvalue;
   gps->datetime[3] = uvalue / 10000;
   gps->datetime[4] = (uvalue % 10000) / 100;
   gps->datetime[5] = uvalue % 100;
-  // clog(INF,"time: %d %d %d\n", gps->datetime[3],
+  // cnmea_inf("time: %d %d %d\n", gps->datetime[3],
   // gps->datetime[4],gps->datetime[5]);
 
   // 定位状态
@@ -297,24 +336,24 @@ int parse_rmc(nmea_parsed_struct *gps, char *buf) {
 
   if (*head == 'A') {
     gps->state = EN_GS_A;
-  } else // if(*head == 'V')
+  } else  // if(*head == 'V')
   {
     gps->state = EN_GS_V;
-    clog(INF, "GPRMC state : V, invalid location\r\n");
+    cnmea_inf("GPRMC state : V, invalid location\r\n");
     return ERROR;
   }
 
   tail = head + 1;
   // 3. 纬度
   head = tail + 1;
-  tail = strchr((char *)head, ',');
+  tail = strchr((char*)head, ',');
   if (tail == NULL) {
-    clog(INF, "invalid format:%s\r\n", head);
+    cnmea_inf("invalid format:%s\r\n", head);
     return ERROR;
   }
   //说明2个逗号相邻，数据为空
   if (tail - head == 0 || tail - head > 16) {
-    clog(INF, "invalid gprmc, find lat failed\r\n");
+    cnmea_inf("invalid gprmc, find lat failed\r\n");
     return ERROR;
   }
   memset(tmp, 0, 16);
@@ -324,7 +363,7 @@ int parse_rmc(nmea_parsed_struct *gps, char *buf) {
 
   dvalue = atof(tmp);
 
-  uvalue = (uint32_t)dvalue;
+  uvalue        = (uint32_t)dvalue;
   gps->latitude = (uint32_t)(((uvalue / 100) * 60 + (dvalue - uvalue / 100 * 100)) * 30000);
 
   gps->f_latitude = (float)gps->latitude / (60 * 30000);
@@ -333,38 +372,38 @@ int parse_rmc(nmea_parsed_struct *gps, char *buf) {
   // memset(tmp, 0, 16);
   // sprintf(tmp, "%f", dvalue);
   // strcpy(gps->lat_str, tmp);
-  // clog(INF,"gps lat %s\n", gps->lat_str);
+  // cnmea_inf("gps lat %s\n", gps->lat_str);
   // 4.纬度属性
   head = tail + 1;
 
   if (*head == 'N') {
-    gps->lat_ind = EN_NORTH;
+    gps->lat_ind        = EN_NORTH;
     gps->lat_ind_str[0] = 'N';
     gps->lat_ind_str[1] = 0;
-    tail = head + 1;
+    tail                = head + 1;
   } else if (*head == 'S') {
-    gps->lat_ind = EN_SOUTH;
+    gps->lat_ind        = EN_SOUTH;
     gps->lat_ind_str[0] = 'S';
     gps->lat_ind_str[1] = 0;
-    tail = head + 1;
+    tail                = head + 1;
 
     /* 南纬用负数表示 */
     sprintf(gps->lat_str, "-%s", gps->lat_str);
     gps->f_latitude = -(gps->f_latitude);
 
   } else {
-    clog(INF, "invalid lng indication\r\n");
+    cnmea_inf("invalid lng indication\r\n");
     return ERROR;
   }
   // 5. 经度
   head = tail + 1;
-  tail = strchr((char *)head, ',');
+  tail = strchr((char*)head, ',');
   if (tail == NULL) {
-    clog(INF, "invalid format:%s\r\n", head);
+    cnmea_inf("invalid format:%s\r\n", head);
     return ERROR;
   }
   if (tail - head == 0 || tail - head > 16) {
-    clog(INF, "invalid gprmc,find lng failed\r\n");
+    cnmea_inf("invalid gprmc,find lng failed\r\n");
     return ERROR;
   }
   memset(tmp, 0, 16);
@@ -374,7 +413,7 @@ int parse_rmc(nmea_parsed_struct *gps, char *buf) {
 
   dvalue = atof(tmp);
 
-  uvalue = (uint32_t)dvalue;
+  uvalue         = (uint32_t)dvalue;
   gps->longitude = (uint32_t)((uvalue / 100 * 60 + (dvalue - uvalue / 100 * 100)) * 30000);
 
   gps->f_longitude = (float)gps->longitude / (60 * 30000);
@@ -382,38 +421,38 @@ int parse_rmc(nmea_parsed_struct *gps, char *buf) {
   // memset(tmp, 0, 16);
   // sprintf(tmp, "%f", dvalue);
   // strcpy(gps->lng_str, tmp);
-  // clog(INF,"gps lng %s\n", gps->lng_str);
+  // cnmea_inf("gps lng %s\n", gps->lng_str);
   // 6.经度属性
   head = tail + 1;
 
   if (*head == 'E') {
-    gps->long_ind = EN_EAST;
+    gps->long_ind       = EN_EAST;
     gps->lng_ind_str[0] = 'E';
     gps->lng_ind_str[1] = 0;
-    tail = head + 1;
+    tail                = head + 1;
   } else if (*head == 'W') {
-    gps->long_ind = EN_WEST;
+    gps->long_ind       = EN_WEST;
     gps->lng_ind_str[0] = 'W';
     gps->lng_ind_str[1] = 0;
-    tail = head + 1;
+    tail                = head + 1;
     /* 西经用负数表示 */
     sprintf(gps->lng_str, "-%s", gps->lng_str);
     gps->f_longitude = -(gps->f_longitude);
   } else {
-    clog(INF, "invalid lat indication\r\n");
+    cnmea_inf("invalid lat indication\r\n");
     return ERROR;
   }
 
   /*GPRMC,133538.12,A,4717.13792,N,00834.16028,E,13.795,111.39,190203,,,A*53*/
   // 7. 速度
   head = tail + 1;
-  tail = strchr((char *)head, ',');
+  tail = strchr((char*)head, ',');
   if (tail == NULL) {
-    clog(INF, "invalid format:%s\r\n", head);
+    cnmea_inf("invalid format:%s\r\n", head);
     return ERROR;
   }
   if (tail - head == 0 || tail - head > 16) {
-    clog(INF, "invalid packet\r\n");
+    cnmea_inf("invalid packet\r\n");
     return ERROR;
   }
   memset(tmp, 0, 16);
@@ -427,52 +466,52 @@ int parse_rmc(nmea_parsed_struct *gps, char *buf) {
 
   // 8. 航向 以真北为参考
   head = tail + 1;
-  tail = strchr((char *)head, ',');
+  tail = strchr((char*)head, ',');
   if (tail == NULL) {
-    clog(INF, "invalid format:%s\r\n", head);
+    cnmea_inf("invalid format:%s\r\n", head);
     return ERROR;
   }
   if (tail - head == 0 || tail - head > 16) {
-    clog(INF, "invalid packet\r\n");
+    cnmea_inf("invalid packet\r\n");
     return ERROR;
   }
   memset(tmp, 0, 16);
   memcpy(tmp, head, tail - head);
-  dvalue = atof(tmp);
+  dvalue      = atof(tmp);
   gps->course = (uint16_t)dvalue * 100;
   // 9. 日期
   head = tail + 1;
-  tail = strchr((char *)head, ',');
+  tail = strchr((char*)head, ',');
   if (tail == NULL) {
-    clog(INF, "invalid format:%s\r\n", head);
+    cnmea_inf("invalid format:%s\r\n", head);
     return ERROR;
   }
   if (tail - head == 0 || tail - head > 16) {
-    clog(INF, "invalid packet\r\n");
+    cnmea_inf("invalid packet\r\n");
     return ERROR;
   }
   memcpy(tmp, head, tail - head);
-  uvalue = (uint32_t)atof(tmp);
+  uvalue           = (uint32_t)atof(tmp);
   gps->datetime[2] = uvalue / 10000;
   gps->datetime[1] = (uvalue % 10000) / 100;
   gps->datetime[0] = uvalue % 100;
 
-  // clog(INF,"datatime: %d %d %d %d %d %d\n", gps->datetime[0],
+  // cnmea_inf("datatime: %d %d %d %d %d %d\n", gps->datetime[0],
   // gps->datetime[1],
   //        gps->datetime[2], gps->datetime[3], gps->datetime[4],
   //        gps->datetime[5]);
 
   // 10 磁偏角
   head = tail + 1;
-  tail = strchr((char *)head, ',');
+  tail = strchr((char*)head, ',');
   if (tail == NULL) {
-    clog(INF, "invalid format:%s\r\n", head);
+    cnmea_inf("invalid format:%s\r\n", head);
     return ERROR;
   }
   // bugfix: 磁偏角可能为空 无需强制判断长度
   memset(tmp, 0, 16);
   memcpy(tmp, head, tail - head);
-  dvalue = atof(tmp);
+  dvalue              = atof(tmp);
   gps->magnetic_value = (uint16_t)dvalue * 100;
 
   // 11. 磁偏角方向
@@ -480,13 +519,13 @@ int parse_rmc(nmea_parsed_struct *gps, char *buf) {
 
   if (*head == 'E') {
     gps->magnetic_ind = EN_EAST;
-    tail = head + 1;
+    tail              = head + 1;
   } else if (*head == 'W') {
     gps->magnetic_ind = EN_WEST;
-    tail = head + 1;
+    tail              = head + 1;
   } else {
     gps->magnetic_ind = EN_INV;
-    tail = head;
+    tail              = head;
   }
   // 12. 模式
   head = tail + 1;
@@ -498,25 +537,25 @@ int parse_rmc(nmea_parsed_struct *gps, char *buf) {
     gps->mode = EN_GM_E;
   } else {
     gps->mode = EN_GM_N;
-    clog(INF, "GPRMC mode : N, invalid location\r\n");
+    cnmea_inf("GPRMC mode : N, invalid location\r\n");
     return ERROR;
   }
 
   return SUCCESS;
 }
 
-int parse_gga(nmea_parsed_struct *gps, char *buf) {
-  char *head, *tail;
+int parse_gga(nmea_parsed_struct* gps, char* buf) {
+  char * head, *tail;
   double dvalue;
-  char tmp[16] = {0};
-  int i;
+  char   tmp[16] = {0};
+  int    i;
 
   if (gps == NULL || buf == NULL)
     return ERROR;
 
   /*GPGGA,133404.00,4717.14117,N,00833.86174,E,1,11,1.49,478.7,M,48.0,M,,0*62*/
   /*GPGGA,,,,,,0,00,99.99,,,,,,*48*/
-  // clog(INF,"GXGGA:%s\n", buf);
+  // cnmea_inf("GXGGA:%s\n", buf);
   // 1. 时间
   // 从第一个逗号后面开始
   head = buf + 6;
@@ -524,7 +563,7 @@ int parse_gga(nmea_parsed_struct *gps, char *buf) {
   for (i = 0; i < 6; i++) {
     tail = strchr(head, ',');
     if (tail == NULL) {
-      clog(INF, "invalid format:%s\r\n", head);
+      cnmea_inf("invalid format:%s\r\n", head);
       return ERROR;
     }
     head = tail + 1;
@@ -533,18 +572,18 @@ int parse_gga(nmea_parsed_struct *gps, char *buf) {
   // 2. 卫星个数
   tail = strchr(head, ',');
   if (tail == NULL) {
-    clog(INF, "invalid format:%s\r\n", head);
+    cnmea_inf("invalid format:%s\r\n", head);
     return ERROR;
   }
   if (tail - head == 0 || tail - head > 16) {
-    clog(INF, "invalid packet\r\n");
+    cnmea_inf("invalid packet\r\n");
     return ERROR;
   }
   memcpy(tmp, head, tail - head);
   gps->sat_uesed = atoi(tmp);
 
   if (gps->sat_uesed == 0) {
-    clog(INF, "sat num: 0;invalid gpgga\r\n");
+    cnmea_inf("sat num: 0;invalid gpgga\r\n");
     return ERROR;
   }
 
@@ -552,37 +591,37 @@ int parse_gga(nmea_parsed_struct *gps, char *buf) {
   head = tail + 1;
   tail = strchr(head, ',');
   if (tail == NULL) {
-    clog(INF, "invalid format:%s\r\n", head);
+    cnmea_inf("invalid format:%s\r\n", head);
     return ERROR;
   }
   if (tail - head == 0 || tail - head > 16) {
-    clog(INF, "invalid packet\r\n");
+    cnmea_inf("invalid packet\r\n");
     return ERROR;
   }
   memset(tmp, 0, 16);
   memcpy(tmp, head, tail - head);
-  dvalue = atof(tmp);
+  dvalue    = atof(tmp);
   gps->hdop = (uint16_t)dvalue * 100;
 
   // 3. 海拔
   head = tail + 1;
   tail = strchr(head, ',');
   if (tail == NULL) {
-    clog(INF, "invalid format:%s\r\n", head);
+    cnmea_inf("invalid format:%s\r\n", head);
     return ERROR;
   }
   if (tail - head == 0 || tail - head > 16) {
-    clog(INF, "invalid packet\r\n");
+    cnmea_inf("invalid packet\r\n");
     return ERROR;
   }
   memset(tmp, 0, 16);
   memcpy(tmp, head, tail - head);
-  dvalue = atof(tmp);
-  gps->f_altitude = dvalue;
+  dvalue            = atof(tmp);
+  gps->f_altitude   = dvalue;
   gps->msl_altitude = (uint16_t)dvalue * 10;
 
   // print the gps info
-  // clog(RUN, "gps info: sat num %u; HDOP %u; msl_altitude %u\n",
+  // clog_run( "gps info: sat num %u; HDOP %u; msl_altitude %u\n",
   // gps->sat_uesed, gps->hdop, gps->msl_altitude);
 
   return SUCCESS;
@@ -593,26 +632,26 @@ int parse_gga(nmea_parsed_struct *gps, char *buf) {
 //$GPGSV,5,4,17,17,23,276,,08,22,050,30,19,06,260,,09,03,196,30*79
 //$GPGSV,5,5,17,06,01,216,*4D
 
-int snr_list_add(snr_node_struct *node) {
+int snr_list_add(snr_node_struct* node) {
   int i;
   if (gps.snr_index < MAX_SNR_NUM) {
     for (i = 0; i < gps.snr_index; i++) {
       if (gps.snr_list[i].sat_no == node->sat_no) {
         memcpy(&gps.snr_list[i], node, sizeof(snr_node_struct));
-        clog(INF, "update %u node:%u %u \r\n", i, node->sat_no, node->snr);
+        cnmea_inf("update %u node:%u %u \r\n", i, node->sat_no, node->snr);
         return SUCCESS;
       }
     }
     memcpy(&gps.snr_list[gps.snr_index], node, sizeof(snr_node_struct));
-    clog(INF, "insert new snr node:%u %u \r\n", node->sat_no, node->snr);
+    cnmea_inf("insert new snr node:%u %u \r\n", node->sat_no, node->snr);
     gps.snr_index++;
-    clog(INF, "snr num:%u\r\n", gps.snr_index);
+    cnmea_inf("snr num:%u\r\n", gps.snr_index);
     return SUCCESS;
   } else
     return ERROR;
 }
 void snr_list_sort(void) {
-  int i, j;
+  int             i, j;
   snr_node_struct tmp;
 
   for (i = 0; i < gps.snr_index - 1; i++) {
@@ -625,12 +664,12 @@ void snr_list_sort(void) {
     }
   }
 }
-int parse_gsv(nmea_parsed_struct *gps, char *buf) {
-  char *head, *tail;
+int parse_gsv(nmea_parsed_struct* gps, char* buf) {
+  char *   head, *tail;
   uint16_t sat_no;
-  uint8_t snr;
-  char tmp[16] = {0};
-  int i;
+  uint8_t  snr;
+  char     tmp[16] = {0};
+  int      i;
 
   if (gps == NULL || buf == NULL)
     return ERROR;
@@ -640,7 +679,7 @@ int parse_gsv(nmea_parsed_struct *gps, char *buf) {
   for (i = 0; i < 3; i++) {
     tail = strchr(head, ',');
     if (tail == NULL) {
-      clog(INF, "invalid format:%s\r\n", head);
+      cnmea_inf("invalid format:%s\r\n", head);
       return ERROR;
     }
     head += (tail + 1 - head);
@@ -650,11 +689,11 @@ int parse_gsv(nmea_parsed_struct *gps, char *buf) {
   do {
     tail = strchr(head, ',');
     if (tail == NULL) {
-      clog(INF, "invalid format:%s\r\n", head);
+      cnmea_inf("invalid format:%s\r\n", head);
       return ERROR;
     }
     if (tail - head == 0 || tail - head > 16) {
-      clog(INF, "invalid packet\r\n");
+      cnmea_inf("invalid packet\r\n");
       return ERROR;
     }
     memset(tmp, 0, sizeof(tmp));
@@ -666,7 +705,7 @@ int parse_gsv(nmea_parsed_struct *gps, char *buf) {
     for (i = 0; i < 2; i++) {
       tail = strchr(head, ',');
       if (tail == NULL) {
-        clog(INF, "invalid format:%s\r\n", head);
+        cnmea_inf("invalid format:%s\r\n", head);
         return ERROR;
       }
       head += (tail + 1 - head);
@@ -675,25 +714,29 @@ int parse_gsv(nmea_parsed_struct *gps, char *buf) {
     if (tail == NULL) {
       tail = strchr(head, '*');
     }
-    if (tail - head > 16) { // 允许为空
-      clog(INF, "invalid packet\r\n");
+    if (tail - head > 16) {  // 允许为空
+      cnmea_inf("invalid packet\r\n");
       return ERROR;
     }
     if (tail - head) {
       memset(tmp, 0, sizeof(tmp));
       memcpy(tmp, head, tail - head);
       snr = atoi(tmp);
-    } else
+    } else {
       snr = 0;
+    }
     head += (tail + 1 - head);
 
-    clog(INF, "valide node,sat no %u snr val %u\n", sat_no, snr);
+    cnmea_inf("valide node,sat no %u snr val %u\n", sat_no, snr);
 
     // 存储当前节点解析的出来snr对值
-    snr_node_struct snr_node;
-    snr_node.sat_no = sat_no;
-    snr_node.snr = snr;
-    snr_list_add(&snr_node);
+    if (snr > 0) {
+      snr_node_struct snr_node;
+      snr_node.sat_no = sat_no;
+      snr_node.snr    = snr;
+      snr_list_add(&snr_node);
+    }
+    cnmea_delay(50);
   } while (*tail != '*');
 
   snr_list_sort();
