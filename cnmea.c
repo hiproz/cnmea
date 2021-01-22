@@ -28,9 +28,9 @@
 #define cnmea_err printf
 #endif
 #else
-#define cnmea_inf(...)
-#define cnmea_war(...)
-#define cnmea_err(...)
+#define cnmea_inf
+#define cnmea_war
+#define cnmea_err
 #endif  //CNMEA_LOG_ENABLE
 
 ///////////////////////////////////////////////////////////////////////////
@@ -67,7 +67,7 @@ int get_nmea(char** nmea_buf, uint8_t key, char* nmea, uint8_t len) {
     //cnmea_war( "can't find %s\n", NMEA_KEY[key]);
     return ERROR;
   } else {
-    cnmea_inf("found %s\n", NMEA_KEY[key]);
+    cnmea_inf("found %s\r\n", NMEA_KEY[key]);
   }
 
   // cnmea_inf("GNRMC:%s\r\n", head);
@@ -93,7 +93,8 @@ int get_nmea(char** nmea_buf, uint8_t key, char* nmea, uint8_t len) {
   // 模拟经纬度
   srand(hal_time.ui32Second);
   // 不能带 $
-  sprintf(nmea, "GPRMC,092846.400,A,4618.98%02d,N,12039.65%02d,E,000.0,183.8,070417,,,A*73", rand() % 100, rand() % 100);
+  sprintf(nmea, "GPRMC,092846.400,A,4618.98%02d,N,12039.65%02d,E,000.0,183.8,070417,,,A*73", rand() % 100,
+          rand() % 100);
 #endif
 
   //更新搜索的起点，准备下次继续搜索
@@ -153,7 +154,7 @@ int get_nmea(char** nmea_buf, uint8_t key, char* nmea, uint8_t len) {
   }
 }
 /**
- * 
+ *
  * 注意: 这个接口的buf必须包含完整的类似“$GNRMC”的报文头部特征，否则解析可能失效
  */
 int get_gps_info(char* buf, uint16_t len) {
@@ -164,7 +165,7 @@ int get_gps_info(char* buf, uint16_t len) {
 
   //nmea 的特征头 $GXRMC,
   if (len < 7) {
-    cnmea_err("invalid len of NMEA");
+    cnmea_err("invalid len of NMEA\r\n");
     return ERROR;
   }
 
@@ -179,7 +180,7 @@ int get_gps_info(char* buf, uint16_t len) {
     } else {
       ret = parse_nmea(&gps, EN_GGA, nmea);
       if (ret != SUCCESS) {
-        cnmea_inf("parse GGA failed!\n");
+        cnmea_inf("parse GGA failed!\r\n");
         cnmea_delay(50);
         continue;
       } else {
@@ -222,7 +223,6 @@ int get_gps_info(char* buf, uint16_t len) {
       }
 
       if (gps.latitude > 0 || gps.longitude > 0) {
-        clog_run("RMC success %u times.lat:%s;lng:%s;speed:%u;sat used:%u\r\n", loc_success_times, gps.lat_str, gps.lng_str, gps.speed, gps.sat_uesed);
         gps.gps_average.lat[gps.gps_average.index] = gps.f_latitude;
         gps.gps_average.lng[gps.gps_average.index] = gps.f_longitude;
         gps.gps_average.index                      = (gps.gps_average.index + 1) % GPS_ARVRG_NUM;
@@ -231,6 +231,8 @@ int get_gps_info(char* buf, uint16_t len) {
           gps.gps_average.count = GPS_ARVRG_NUM;
         }
         loc_success_times++;
+        cnmea_inf("RMC success %u times.lat:%s;lng:%s;speed:%u;sat used:%u\r\n", loc_success_times, gps.lat_str,
+                  gps.lng_str, gps.speed, gps.sat_uesed);
         if (loc_success_times >= MIN_LOC_SUCCESS_TIMES) {
           loc_success_times = 0;
           // 求平均值
@@ -264,7 +266,7 @@ int get_gps_info(char* buf, uint16_t len) {
   memset(gps.lat_str, 0, sizeof(gps.lat_str));
   memset(gps.lng_str, 0, sizeof(gps.lng_str));
 
-  cnmea_err("gps success %d times, less than %d times,locating failed\r\n", loc_success_times, MIN_LOC_SUCCESS_TIMES);
+  cnmea_war("gps success %d times, less than %d times,locating continue\r\n", loc_success_times, MIN_LOC_SUCCESS_TIMES);
   return ret;
 }
 
@@ -650,9 +652,10 @@ int snr_list_add(snr_node_struct* node) {
   } else
     return ERROR;
 }
+
 void snr_list_sort(void) {
   int             i, j;
-  snr_node_struct tmp;
+  snr_node_struct tmp = {0};
 
   for (i = 0; i < gps.snr_index - 1; i++) {
     for (j = i + 1; j < gps.snr_index; j++) {
@@ -664,6 +667,7 @@ void snr_list_sort(void) {
     }
   }
 }
+
 int parse_gsv(nmea_parsed_struct* gps, char* buf) {
   char *   head, *tail;
   uint16_t sat_no;
@@ -686,7 +690,8 @@ int parse_gsv(nmea_parsed_struct* gps, char* buf) {
   }
 
   // 找到第一组数据
-  do {
+  // 兼容NMEA0183 V4.1
+  while (*head != '*' && *(head + 1) != '*') {
     tail = strchr(head, ',');
     if (tail == NULL) {
       cnmea_inf("invalid format:%s\r\n", head);
@@ -727,7 +732,7 @@ int parse_gsv(nmea_parsed_struct* gps, char* buf) {
     }
     head += (tail + 1 - head);
 
-    cnmea_inf("valide node,sat no %u snr val %u\n", sat_no, snr);
+    cnmea_inf("valide node,sat NO. %u, snr val %u\r\n", sat_no, snr);
 
     // 存储当前节点解析的出来snr对值
     if (snr > 0) {
@@ -736,8 +741,8 @@ int parse_gsv(nmea_parsed_struct* gps, char* buf) {
       snr_node.snr    = snr;
       snr_list_add(&snr_node);
     }
-    cnmea_delay(50);
-  } while (*tail != '*');
+    cnmea_delay(30);
+  }
 
   snr_list_sort();
 
